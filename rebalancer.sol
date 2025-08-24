@@ -27,6 +27,7 @@ contract Manager is Ownable {
     address public immutable token0;
     address public immutable token1;
     int24   public immutable tickSpacing;
+    address public  deployer;
 
     /* Exec */
     address public bot;
@@ -51,18 +52,16 @@ contract Manager is Ownable {
     constructor(
         address _pool,
         address _positionManager,
-        address _farmingCenter,
-        address _eternalFarming,
         address _router,
         address _initialOwner
     ) Ownable(_initialOwner) {
-        require(_pool != address(0) && _positionManager != address(0) && _farmingCenter != address(0) && _eternalFarming != address(0), "zero addr");
+        require(_pool != address(0) && _positionManager != address(0), "zero addr");
         pool = IAlgebraPool(_pool);
         positionManager = INonfungiblePositionManager(_positionManager);
+        address _farmingCenter = positionManager.farmingCenter();
         farmingCenter = IFarmingCenter(_farmingCenter);
-        eternalFarming = IAlgebraEternalFarming(_eternalFarming);
+        eternalFarming = farmingCenter.eternalFarming();
         router = _router;
-
         token0 = pool.token0();
         token1 = pool.token1();
         tickSpacing = pool.tickSpacing();
@@ -90,16 +89,17 @@ contract Manager is Ownable {
     function getNftData() external view returns (uint256, int24, int24, uint128) {
         return (currentTokenId, currentTickLower, currentTickUpper, currentLiquidity);
     }
+
     /* ─────────────── Initialize ─────────────── */
     function initialize(uint256 tokenId) external onlyOwner {
         require(IERC721(address(positionManager)).ownerOf(tokenId) == address(this), "NFT not in contract");
-        ( , , , , , int24 tickLower, int24 tickUpper, uint128 liquidity, , , , ) = positionManager.positions(tokenId);
+        ( , , , ,address _deployer , int24 tickLower, int24 tickUpper, uint128 liquidity, , , , ) = positionManager.positions(tokenId);
 
         currentTokenId    = tokenId;
         currentTickLower  = tickLower;
         currentTickUpper  = tickUpper;
         currentLiquidity  = liquidity;
-
+        deployer = _deployer;
         IncentiveKey memory key = _getIncentiveKey();
         positionManager.approveForFarming(tokenId, true, address(farmingCenter));
         farmingCenter.enterFarming(key, tokenId);
@@ -123,7 +123,7 @@ contract Manager is Ownable {
         if (oldTokenId != 0) {
             require(IERC721(address(positionManager)).ownerOf(oldTokenId) == address(this), "NFT not in contract");
             farmingCenter.exitFarming(key, oldTokenId);
-            farmingCenter.collectRewards(key, oldTokenId);
+            //farmingCenter.collectRewards(key, oldTokenId);
             if (address(key.rewardToken) != address(0)) {
                 farmingCenter.claimReward(key.rewardToken, address(this), type(uint256).max);
             }
@@ -158,7 +158,7 @@ contract Manager is Ownable {
         farmingCenter.exitFarming(key, currentTokenId);
 
         // 2) Collect rewards
-        farmingCenter.collectRewards(key, currentTokenId);
+        //farmingCenter.collectRewards(key, currentTokenId);
 
         if (address(key.rewardToken) != address(0)) {
             farmingCenter.claimReward(key.rewardToken, address(this), type(uint256).max);
@@ -249,7 +249,7 @@ contract Manager is Ownable {
         INonfungiblePositionManager.MintParams memory mParams = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
-            deployer: address(this),
+            deployer: deployer,
             tickLower: tickLower,
             tickUpper: tickUpper,
             amount0Desired: amount0,
@@ -272,6 +272,8 @@ contract Manager is Ownable {
     function _swap(address asset, uint256 amount, bytes memory data) internal {
         require(router != address(0), "router not set");
         require(amount > 0, "amount=0");
+        require(asset == token0 || asset == token1,"Not allowed");
+        //require(IERC20(asset).balanceOf(address(this) >= amount,"insufficiant balance"));
         IERC20(asset).approve(router, 0);
         IERC20(asset).approve(router, amount);
 
